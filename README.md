@@ -9,7 +9,7 @@ TT237W series). Built on the reverse-engineered
 directly to the machine's WiFi dongle on TCP/51515. No cloud, no vendor
 account.
 
-Requires `jura_connect>=0.9.1`. The integration ships the Python dependency
+Requires `jura_connect>=0.14.0`. The integration ships the Python dependency
 declaration; Nix users get it pinned via the flake input.
 
 ## Features
@@ -49,6 +49,12 @@ declaration; Nix users get it pinned via the flake input.
 
 ### Configuration controls (CONFIG section)
 
+- **Brew controls** — one product picker plus profile-backed strength,
+  water, temperature, milk and milk-foam selectors and a Brew button.
+  Twin-grinder profiles additionally get a **grinder ratio** selector;
+  profiles without `GRINDER_RATIO` get no such entity, and products
+  without that parameter leave it unavailable. The left:right endpoints
+  were physically verified on a GIGA 6 / EF566.
 - **`select.*`** entities for switch / combobox / item-slider settings
   (language, units, auto-off delay, milk rinsing, frother instructions, …).
   Writes are validated against the profile before any TCP session opens, so

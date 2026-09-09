@@ -336,6 +336,7 @@ def test_select_brew_product_loads_saved_prefs_into_selection(mock_backend, fake
         "strength": 2,
         "water_ml": 130,
         "temp": 1,
+        "grinder_ratio": None,
         "milk_s": None,
         "milk_foam_s": None,
     }
@@ -350,6 +351,7 @@ def test_select_brew_product_without_prefs_is_all_factory_default(mock_backend, 
         "strength": None,
         "water_ml": None,
         "temp": None,
+        "grinder_ratio": None,
         "milk_s": None,
         "milk_foam_s": None,
     }

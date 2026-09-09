@@ -20,6 +20,7 @@
  *   strength: select.kuche_kaffeebert_brew_strength
  *   water: select.kuche_kaffeebert_brew_water
  *   temperature: select.kuche_kaffeebert_brew_temperature
+ *   grinder_ratio: select.kuche_kaffeebert_brew_grinder_ratio
  *   milk: select.kuche_kaffeebert_brew_milk
  *   milk_foam: select.kuche_kaffeebert_brew_milk_foam
  *   button: button.kuche_kaffeebert_brew
@@ -42,6 +43,7 @@ const PARAM_ROWS = [
   { key: "strength", label: "Strength", icon: "mdi:coffee" },
   { key: "water", label: "Water", icon: "mdi:cup-water", unit: " mL" },
   { key: "temperature", label: "Temperature", icon: "mdi:thermometer" },
+  { key: "grinder_ratio", label: "Grinders (left:right)", icon: "mdi:chart-donut" },
   { key: "milk", label: "Milk", icon: "mdi:beer-outline", unit: " s" },
   { key: "milk_foam", label: "Milk Foam", icon: "mdi:chart-bubble", unit: " s" },
 ];
@@ -125,6 +127,7 @@ class JuraBrewCard extends HTMLElement {
       strength: pick(cfg.strength, "select", "_brew_strength"),
       water: pick(cfg.water, "select", "_brew_water"),
       temperature: pick(cfg.temperature, "select", "_brew_temperature"),
+      grinder_ratio: pick(cfg.grinder_ratio, "select", "_brew_grinder_ratio"),
       milk: pick(cfg.milk, "select", "_brew_milk"),
       milk_foam: pick(cfg.milk_foam, "select", "_brew_milk_foam"),
       button: cfg.button || pick(null, "button", "_brew"),
@@ -429,7 +432,7 @@ class JuraBrewCard extends HTMLElement {
           const idx = Number(input.value);
           const isDef = idx === 0;
           rowEl.classList.toggle("is-default", isDef);
-          valEl.textContent = isDef ? FACTORY_DEFAULT : `${opts[idx]}${row.unit || ""}`;
+          valEl.textContent = isDef ? FACTORY_DEFAULT : this._formatValue(row, opts[idx]);
           this._paintSlider(input, isDef);
         });
         // Release: commit the value (which sets a pending hold) and end the
@@ -464,7 +467,7 @@ class JuraBrewCard extends HTMLElement {
       input.value = String(idx);
       const isDef = idx === 0;
       rowEl.classList.toggle("is-default", isDef);
-      valEl.textContent = isDef ? FACTORY_DEFAULT : `${options[idx]}${row.unit || ""}`;
+      valEl.textContent = isDef ? FACTORY_DEFAULT : this._formatValue(row, options[idx]);
       this._paintSlider(input, isDef);
     }
 
@@ -483,6 +486,11 @@ class JuraBrewCard extends HTMLElement {
     }
     return pending;
   }
+
+  _formatValue(row, value) {
+    if (row.key === "grinder_ratio") return `${value}`.replace("_", ":");
+    return `${value}${row.unit || ""}`;
+  }
 }
 
 if (!customElements.get("jura-brew-card")) {
@@ -491,7 +499,7 @@ if (!customElements.get("jura-brew-card")) {
   window.customCards.push({
     type: "jura-brew-card",
     name: "Jura Brew Card",
-    description: "Brew a coffee from your JURA machine: product + strength/water/temperature sliders + Brew button.",
+    description: "Brew a coffee from your JURA machine: product + profile-backed recipe controls + Brew button.",
     preview: false,
   });
   // eslint-disable-next-line no-console
