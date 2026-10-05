@@ -24,6 +24,13 @@ DISCOVERY_TCP_TIMEOUT = 0.4
 
 # Selection-step sentinel for "skip discovery, type the IP myself".
 SELECTION_MANUAL = "manual"
+# Config-entry option (hidden "Advanced" field in the options flow): when
+# true (the default since 1.0.0) entities keep showing their last-known
+# value while the machine is unreachable instead of going "unavailable".
+# Set it to false to restore the pre-1.0.0 behavior where every poll
+# confirmed OFFLINE flipped all entities except the connectivity sensor.
+CONF_RETAIN_WHEN_OFFLINE = "retain_when_offline"
+DEFAULT_RETAIN_WHEN_OFFLINE = True
 
 # Active alert -> human-readable state when picking a single overall machine state.
 # Earlier entries win when multiple alerts are active. The order roughly
@@ -106,6 +113,10 @@ ALERT_BINARY_SENSORS: dict[str, str | None] = {
     "descale_alert": "problem",
     "cleaning_alert": "problem",
     "cappu_rinse_alert": "problem",
+    # "Clean milk system" prompt (bit 41; J.O.E. shows it after every milk
+    # drink). The library emits it as cappu_clean_alert from both the profile
+    # XML and the 0.14.0 fallback codebook.
+    "cappu_clean_alert": "problem",
     # in-progress / running
     "heating_up": "running",
     "coffee_rinsing": "running",

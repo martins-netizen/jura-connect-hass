@@ -4,9 +4,10 @@ The ``jura.brew`` service gains a friendly ``product`` path (build the recipe
 blob from the machine's product table via the ``jura_connect`` library) while
 keeping the legacy raw ``recipe`` path intact. ``jura.descale`` is the
 user-facing service name and dispatches the library's ``descale`` command; the
-legacy ``jura.decalc`` service has been removed. No machine I/O — run_command
-is mocked. Recipe payloads are computed from the library, not hardcoded: the
-byte encoding is the library's concern, so these assert the *wiring*.
+legacy ``jura.decalc`` service has been removed. No machine I/O — ``run_brew``
+and ``run_command`` are mocked. Recipe payloads are computed from the library,
+not hardcoded: the byte encoding is the library's concern, so these assert the
+*wiring*.
 """
 
 from __future__ import annotations
@@ -20,13 +21,14 @@ jura_connect = pytest.importorskip("jura_connect")
 
 from jura_connect import (  # noqa: E402
     KIND_COFFEE_STRENGTH,
+    KIND_GRINDER_RATIO,
     KIND_MILK_FOAM_AMOUNT,
     KIND_TEMPERATURE,
     KIND_WATER_AMOUNT,
     load_profile,
 )
 
-from custom_components.jura import _register_services  # noqa: E402
+from custom_components.jura import BREW_SCHEMA, _register_services  # noqa: E402
 from custom_components.jura.const import CONF_CONN_ID, CONF_HOST, CONF_MACHINE_TYPE, DOMAIN  # noqa: E402
 
 _PROFILE = load_profile("EF1091")
@@ -57,6 +59,7 @@ def _hass_with_coordinator(coordinator) -> MagicMock:
 def _mock_coordinator(machine_type: str = "EF1091") -> MagicMock:
     coordinator = MagicMock()
     coordinator.run_command = AsyncMock(return_value={"name": "brew", "value": "ok"})
+    coordinator.run_brew = AsyncMock(return_value={"ack": "@tp", "frames": []})
     config_entry = MagicMock()
     config_entry.data = {CONF_MACHINE_TYPE: machine_type, CONF_HOST: "192.0.2.10", CONF_CONN_ID: "x"}
     coordinator.config_entry = config_entry
@@ -65,6 +68,14 @@ def _mock_coordinator(machine_type: str = "EF1091") -> MagicMock:
 
 def _brew_handler(hass):
     return hass.services._registered[(DOMAIN, "brew")]["handler"]
+
+
+def _brew_call(hass, data: dict) -> MagicMock:
+    """Build a ServiceCall whose data passes through the registered
+    BREW_SCHEMA, like a real HA service call does."""
+    call = MagicMock()
+    call.data = BREW_SCHEMA(data)
+    return call
 
 
 # ---------------------------------------------------------------------------
@@ -102,7 +113,7 @@ async def test_brew_by_product_uses_xml_defaults():
     call = MagicMock()
     call.data = {"config_entry_id": "test_entry_id", "product": "espresso_doppio"}
     await _brew_handler(hass)(call)
-    coordinator.run_command.assert_awaited_once_with("brew", [_DEFAULT_RECIPE], allow_destructive=True)
+    coordinator.run_brew.assert_awaited_once_with(_DEFAULT_RECIPE)
 
 
 async def test_brew_by_product_with_overrides():
@@ -118,7 +129,7 @@ async def test_brew_by_product_with_overrides():
         "temperature": 1,
     }
     await _brew_handler(hass)(call)
-    coordinator.run_command.assert_awaited_once_with("brew", [_OVERRIDE_RECIPE], allow_destructive=True)
+    coordinator.run_brew.assert_awaited_once_with(_OVERRIDE_RECIPE)
 
 
 async def test_brew_by_product_with_milk_foam_override():
@@ -133,7 +144,56 @@ async def test_brew_by_product_with_milk_foam_override():
         "milk_foam_s": 12,
     }
     await _brew_handler(hass)(call)
-    coordinator.run_command.assert_awaited_once_with("brew", [_MILK_FOAM_RECIPE], allow_destructive=True)
+    coordinator.run_brew.assert_awaited_once_with(_MILK_FOAM_RECIPE)
+
+
+async def test_brew_by_product_with_grinder_ratio_override():
+    """The service accepts an EF566 profile item and puts it on F2."""
+    coordinator = _mock_coordinator("EF566")
+    hass = _hass_with_coordinator(coordinator)
+    _register_services(hass)
+    call = _brew_call(
+        hass,
+        {
+            "config_entry_id": "test_entry_id",
+            "product": "espresso",
+            "grinder_ratio": "0_100",
+        },
+    )
+    await _brew_handler(hass)(call)
+
+    espresso = load_profile("EF566").product_by_code[0x02]
+    expected = espresso.build_recipe_hex({KIND_GRINDER_RATIO: "0_100"})
+    coordinator.run_brew.assert_awaited_once_with(expected)
+
+
+async def test_brew_schema_preserves_grinder_ratio_item_names():
+    """vol.Any must not coerce documented item names like "100_0" to ints —
+    PEP-515 digit separators would turn them into 1000 and the catalogue
+    check would reject every documented value."""
+    validated = BREW_SCHEMA({"config_entry_id": "e", "product": "espresso", "grinder_ratio": "100_0"})
+    assert validated["grinder_ratio"] == "100_0"
+    validated = BREW_SCHEMA({"config_entry_id": "e", "product": "espresso", "grinder_ratio": 2})
+    assert validated["grinder_ratio"] == 2
+
+
+async def test_brew_grinder_ratio_rejected_on_single_grinder_machine():
+    """EF1091 products declare no F2 parameter: the service must raise
+    rather than brew a wrong recipe."""
+    coordinator = _mock_coordinator()
+    hass = _hass_with_coordinator(coordinator)
+    _register_services(hass)
+    call = _brew_call(
+        hass,
+        {
+            "config_entry_id": "test_entry_id",
+            "product": "espresso_doppio",
+            "grinder_ratio": "50_50",
+        },
+    )
+    with pytest.raises(ValueError, match="grinder_ratio"):
+        await _brew_handler(hass)(call)
+    coordinator.run_brew.assert_not_awaited()
 
 
 async def test_brew_by_product_code_resolves():
@@ -144,7 +204,7 @@ async def test_brew_by_product_code_resolves():
     call = MagicMock()
     call.data = {"config_entry_id": "test_entry_id", "product": "30"}
     await _brew_handler(hass)(call)
-    coordinator.run_command.assert_awaited_once_with("brew", [_DEFAULT_RECIPE], allow_destructive=True)
+    coordinator.run_brew.assert_awaited_once_with(_DEFAULT_RECIPE)
 
 
 async def test_brew_by_product_out_of_range_water_raises():
@@ -157,7 +217,7 @@ async def test_brew_by_product_out_of_range_water_raises():
     call.data = {"config_entry_id": "test_entry_id", "product": "espresso_doppio", "water_ml": 99999}
     with pytest.raises(ValueError):
         await _brew_handler(hass)(call)
-    coordinator.run_command.assert_not_awaited()
+    coordinator.run_brew.assert_not_awaited()
 
 
 async def test_brew_unknown_product_raises():
@@ -182,7 +242,7 @@ async def test_brew_legacy_recipe_path_preserved():
     call = MagicMock()
     call.data = {"config_entry_id": "test_entry_id", "recipe": "01"}
     await _brew_handler(hass)(call)
-    coordinator.run_command.assert_awaited_once_with("brew", ["01"], allow_destructive=True)
+    coordinator.run_brew.assert_awaited_once_with("01")
 
 
 async def test_brew_rejects_product_and_recipe_together():

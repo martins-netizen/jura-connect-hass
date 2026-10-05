@@ -1,12 +1,12 @@
 """Tests for the compact brew "control panel".
 
-The brew UX is seven entities shared across the whole machine (not per
-product): a product select, strength/water/temperature/milk/milk-foam selects (each
-carrying a "Factory Default" sentinel), and a single brew button.
+The brew UX is a compact set of entities shared across the whole machine (not
+per product): a product select, profile-backed parameter selects (each carrying
+a "Factory Default" sentinel), and a single brew button.
 Selections are staged on ``coordinator.brew_selection``; the button reads
 them and builds the recipe via the ``jura_connect`` library. Per-product
 choices persist across restarts via ``coordinator.brew_prefs``. Nothing
-talks to a machine — ``run_command`` is mocked, so no live brew happens.
+talks to a machine — ``run_brew`` is mocked, so no live brew happens.
 
 These exercise the real EF1091 (S8) bundled profile so the option lists,
 defaults and payload vectors are pinned against actual machine data. The
@@ -18,6 +18,7 @@ tests — here we assert the *wiring* funnels the staged selection into
 
 from __future__ import annotations
 
+import dataclasses
 from unittest.mock import AsyncMock
 
 import pytest
@@ -26,6 +27,7 @@ jura_connect = pytest.importorskip("jura_connect")
 
 from jura_connect import (  # noqa: E402
     KIND_COFFEE_STRENGTH,
+    KIND_GRINDER_RATIO,
     KIND_MILK_FOAM_AMOUNT,
     KIND_TEMPERATURE,
     KIND_WATER_AMOUNT,
@@ -44,6 +46,8 @@ from custom_components.jura.const import (  # noqa: E402
 )
 from custom_components.jura.coordinator import JuraCoordinator  # noqa: E402
 from custom_components.jura.select import (  # noqa: E402
+    FACTORY_DEFAULT,
+    BrewGrinderRatioSelect,
     BrewMilkFoamSelect,
     BrewMilkSelect,
     BrewProductSelect,
@@ -52,8 +56,6 @@ from custom_components.jura.select import (  # noqa: E402
     BrewWaterSelect,
 )
 from homeassistant.config_entries import ConfigEntry  # noqa: E402
-
-FACTORY_DEFAULT = "Factory Default"
 
 _PROFILE = load_profile("EF1091")
 # EF1091 product names, in profile order (the brewable product table).
@@ -84,7 +86,7 @@ def _coordinator(entry: ConfigEntry | None = None) -> JuraCoordinator:
     entry = entry or _entry()
     backend = AsyncMock()
     coordinator = JuraCoordinator(AsyncMock(), entry, backend=backend)
-    coordinator.run_command = AsyncMock(return_value={"name": "brew", "value": "ok"})
+    coordinator.run_brew = AsyncMock(return_value={"ack": "@tp", "frames": []})
     coordinator.data = None
     return coordinator
 
@@ -101,6 +103,7 @@ def test_coordinator_seeds_first_product_and_default_params():
         "strength": None,
         "water_ml": None,
         "temp": None,
+        "grinder_ratio": None,
         "milk_s": None,
         "milk_foam_s": None,
     }
@@ -119,6 +122,7 @@ def test_product_select_options_and_current(fake_config_entry):
     assert entity.current_option == "espresso"
     assert entity.entity_category == "config"
     assert entity.unique_id.endswith("brew_product")
+    assert entity._attr_translation_key == "brew_product"
 
 
 async def test_product_select_sets_code_and_loads_factory_default_params():
@@ -152,6 +156,7 @@ async def test_product_select_loads_saved_prefs_into_param_selects():
         "strength": 2,
         "water_ml": 130,
         "temp": 1,
+        "grinder_ratio": None,
         "milk_s": None,
         "milk_foam_s": None,
     }
@@ -213,6 +218,7 @@ def test_strength_select_options_and_default():
     entity = BrewStrengthSelect(coordinator, _entry())
     assert entity.options == [FACTORY_DEFAULT, "1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]
     assert entity.current_option == FACTORY_DEFAULT
+    assert entity._attr_translation_key == "brew_strength"
     assert entity.available is True
     assert entity.entity_category == "config"
     assert entity.unique_id.endswith("brew_strength")
@@ -278,6 +284,7 @@ def test_temp_select_options_and_mapping():
     assert entity.options == [FACTORY_DEFAULT, "low", "normal", "high"]
     assert entity.current_option == FACTORY_DEFAULT
     assert entity.unique_id.endswith("brew_temp")
+    assert entity._attr_translation_key == "brew_temperature"
 
 
 async def test_temp_select_set_and_factory_default():
@@ -288,6 +295,62 @@ async def test_temp_select_set_and_factory_default():
     assert entity.current_option == "normal"
     await entity.async_select_option(FACTORY_DEFAULT)
     assert coordinator.brew_selection["temp"] is None
+
+
+# ---------------------------------------------------------------------------
+# Twin-grinder ratio
+# ---------------------------------------------------------------------------
+
+
+def test_grinder_ratio_select_uses_ef566_profile_items():
+    entry = _entry("EF566")
+    coordinator = _coordinator(entry)
+    entity = BrewGrinderRatioSelect(coordinator, entry)
+
+    assert entity.options == [
+        FACTORY_DEFAULT,
+        "100_0",
+        "75_25",
+        "50_50",
+        "25_75",
+        "0_100",
+    ]
+    assert entity.current_option == FACTORY_DEFAULT
+    assert entity.available is True
+    assert entity.unique_id.endswith("brew_grinder_ratio")
+    assert entity._attr_translation_key == "brew_grinder_ratio"
+
+
+async def test_grinder_ratio_is_staged_persisted_and_sent_as_f2_override():
+    entry = _entry("EF566")
+    coordinator = _coordinator(entry)
+    grinder = BrewGrinderRatioSelect(coordinator, entry)
+    button = JuraBrewButton(coordinator, entry)
+
+    await grinder.async_select_option("100_0")
+    assert coordinator.brew_selection["grinder_ratio"] == 0
+    assert coordinator.brew_prefs["02"]["grinder_ratio"] == 0
+    await button.async_press()
+
+    espresso = load_profile("EF566").product_by_code[0x02]
+    expected = espresso.build_recipe_hex({KIND_GRINDER_RATIO: "100_0"})
+    coordinator.run_brew.assert_awaited_once_with(expected)
+
+
+async def test_grinder_ratio_is_unavailable_for_product_without_f2():
+    entry = _entry("EF566")
+    coordinator = _coordinator(entry)
+    product = BrewProductSelect(coordinator, entry)
+    grinder = BrewGrinderRatioSelect(coordinator, entry)
+
+    await product.async_select_option("hotwater_portion")
+    assert grinder.available is False
+    assert grinder.current_option is None
+    assert grinder.options == [FACTORY_DEFAULT]
+
+
+def test_factory_default_is_a_locale_neutral_state_key():
+    assert FACTORY_DEFAULT == "factory_default"
 
 
 # ---------------------------------------------------------------------------
@@ -360,15 +423,28 @@ def test_button_name_and_unique_id():
     assert button.unique_id.endswith("homeassistant_test_brew")
 
 
+def test_button_unavailable_while_product_blocked(sample_snapshot):
+    """A machine-declared blocking alert for the staged product's kind
+    makes the brew button unavailable instead of erroring on press."""
+    coordinator = _coordinator()  # espresso (kind C) selected
+    button = JuraBrewButton(coordinator, _entry())
+    coordinator.data = sample_snapshot
+    assert button.available is True
+    coordinator.data = dataclasses.replace(sample_snapshot, blocked_products=("espresso",))
+    assert button.available is False
+    coordinator.data = dataclasses.replace(sample_snapshot, blocked_products=("latte_macchiato",))
+    assert button.available is True
+
+
 async def test_button_press_espresso_factory_default_vector():
     """espresso, all Factory Default -> the library's default recipe blob."""
     coordinator = _coordinator()  # espresso selected, all params None
     button = JuraBrewButton(coordinator, _entry())
     await button.async_press()
     expected = _recipe(0x02)
-    coordinator.run_command.assert_awaited_once_with("brew", [expected], allow_destructive=True)
-    # The recipe must NOT carry the @TP: prefix (the library re-adds it).
-    sent = coordinator.run_command.await_args.args[1][0]
+    coordinator.run_brew.assert_awaited_once_with(expected)
+    # The recipe must NOT carry the @TP: prefix (the backend adds it).
+    sent = coordinator.run_brew.await_args.args[0]
     assert not sent.startswith("@TP:")
 
 
@@ -396,7 +472,7 @@ async def test_button_press_coffee_override_vector_via_selection_path():
         0x03,
         {KIND_COFFEE_STRENGTH: 2, KIND_WATER_AMOUNT: 130, KIND_TEMPERATURE: 1},
     )
-    coordinator.run_command.assert_awaited_once_with("brew", [expected], allow_destructive=True)
+    coordinator.run_brew.assert_awaited_once_with(expected)
 
 
 async def test_button_press_cappuccino_milk_foam_override_vector():
@@ -412,7 +488,7 @@ async def test_button_press_cappuccino_milk_foam_override_vector():
     await button.async_press()
 
     expected = _recipe(0x04, {KIND_MILK_FOAM_AMOUNT: 12})
-    coordinator.run_command.assert_awaited_once_with("brew", [expected], allow_destructive=True)
+    coordinator.run_brew.assert_awaited_once_with(expected)
 
 
 # ---------------------------------------------------------------------------
@@ -420,15 +496,16 @@ async def test_button_press_cappuccino_milk_foam_override_vector():
 # ---------------------------------------------------------------------------
 
 
-async def _setup(platform_module):
+async def _setup(platform_module, machine_type: str = "EF1091"):
     from importlib import import_module
 
-    coordinator = _coordinator()
+    entry = _entry(machine_type)
+    coordinator = _coordinator(entry)
     hass = AsyncMock()
     hass.data = {DOMAIN: {"test_entry_id": coordinator}}
     added: list = []
     module = import_module(platform_module)
-    await module.async_setup_entry(hass, _entry(), added.extend)
+    await module.async_setup_entry(hass, entry, added.extend)
     return added
 
 
@@ -443,19 +520,27 @@ def _is_setting_select(entity) -> bool:
 async def test_select_setup_builds_control_panel_not_per_product():
     added = await _setup("custom_components.jura.select")
     brew = [e for e in added if _is_brew_select(e)]
-    brew_names = {e.name for e in brew}
-    assert brew_names == {
-        "Brew Product",
-        "Brew Strength",
-        "Brew Water",
-        "Brew Temperature",
-        "Brew Milk",
-        "Brew Milk Foam",
+    translation_keys = {e._attr_translation_key for e in brew}
+    assert translation_keys == {
+        "brew_product",
+        "brew_strength",
+        "brew_water",
+        "brew_temperature",
+        "brew_milk",
+        "brew_milk_foam",
     }
     # Setting selects are still present...
     assert any(_is_setting_select(e) for e in added)
     # ...but there is exactly one of each brew select (no per-product explosion).
     assert len(brew) == 6
+
+
+async def test_grinder_entity_is_created_only_for_a_declaring_profile():
+    single = await _setup("custom_components.jura.select", "EF1091")
+    twin = await _setup("custom_components.jura.select", "EF566")
+
+    assert not any(e.unique_id.endswith("brew_grinder_ratio") for e in single)
+    assert sum(e.unique_id.endswith("brew_grinder_ratio") for e in twin) == 1
 
 
 async def test_button_setup_creates_single_brew_button():
