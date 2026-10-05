@@ -8,8 +8,9 @@ Two families of selects live here:
   platform instead.
 * **Brew control panel** — a small, machine-wide set that stages the
   *next* brew: a product picker plus strength / water / temperature /
-  milk / milk-foam selects. Each parameter select carries a ``"Factory Default"`` option
-  (meaning "let the recipe builder use the product's XML default" — it does
+  grinder-ratio / milk / milk-foam selects. Each parameter select carries a
+  translated ``factory_default`` option (meaning "let the recipe builder use the
+  product's XML default" — it does
   NOT mean "use the machine's own configured setting", which JURA WiFi has
   no mechanism for) and recomputes its options from whichever product is
   currently selected. Per-product choices persist across restarts
@@ -29,6 +30,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from jura_connect import (
     KIND_COFFEE_STRENGTH,
+    KIND_GRINDER_RATIO,
     KIND_MILK_AMOUNT,
     KIND_MILK_FOAM_AMOUNT,
     KIND_TEMPERATURE,
@@ -48,7 +50,7 @@ SELECT_KINDS = {"switch", "combobox", "item_slider"}
 # Sentinel option meaning "don't override — let the recipe builder use the
 # product's XML/factory default value". This is NOT "use the machine's own
 # stored setting": JURA WiFi exposes no such mechanism.
-FACTORY_DEFAULT = "Factory Default"
+FACTORY_DEFAULT = "factory_default"
 
 
 async def async_setup_entry(
@@ -109,6 +111,8 @@ def _brew_select_entities(coordinator: JuraCoordinator, config_entry: ConfigEntr
         entities.append(BrewWaterSelect(coordinator, config_entry))
     if any(product.param(KIND_TEMPERATURE) for product in profile.products):
         entities.append(BrewTempSelect(coordinator, config_entry))
+    if any(product.param(KIND_GRINDER_RATIO) for product in profile.products):
+        entities.append(BrewGrinderRatioSelect(coordinator, config_entry))
     if any(product.param(KIND_MILK_AMOUNT) for product in profile.products):
         entities.append(BrewMilkSelect(coordinator, config_entry))
     if any(product.param(KIND_MILK_FOAM_AMOUNT) for product in profile.products):
@@ -161,16 +165,17 @@ class BrewProductSelect(JuraEntity, SelectEntity):
 
     Selecting a product makes its Code the staged product and hydrates
     strength/water/temperature from that product's *saved preferences*
-    (each missing param falls back to "Factory Default"). It then asks the
+    (each missing param falls back to the translated factory-default option).
+    It then asks the
     coordinator to refresh listeners so the dependent parameter selects
     re-render their (product-specific) options and loaded values.
     """
 
     _attr_entity_category = EntityCategory.CONFIG
+    _attr_translation_key = "brew_product"
 
     def __init__(self, coordinator: JuraCoordinator, config_entry: ConfigEntry) -> None:
         super().__init__(coordinator, config_entry)
-        self._attr_name = "Brew Product"
         self._attr_unique_id = f"{DOMAIN}_{self._slug}_brew_product"
 
     @property
@@ -208,9 +213,11 @@ class _BrewParamSelect(JuraEntity, SelectEntity):
     """Base for a brew parameter select bound to the *currently-selected* product.
 
     Subclasses bind to one library recipe-param kind (strength / water /
-    temperature). Options always lead with :data:`FACTORY_DEFAULT`; the value
-    lives on ``coordinator.brew_selection[<key>]`` where ``None`` means
-    "Factory Default" (send the product's XML default). Changing the value
+    temperature / grinder ratio / milk / milk foam). Options always lead with
+    :data:`FACTORY_DEFAULT`; the value lives on
+    ``coordinator.brew_selection[<key>]`` where ``None`` means
+    the translated factory-default option (send the product's XML default).
+    Changing the value
     also remembers it for the current product (``coordinator.brew_prefs``) and
     schedules a persistent save. The select is unavailable while the selected
     product doesn't expose the parameter.
@@ -223,7 +230,10 @@ class _BrewParamSelect(JuraEntity, SelectEntity):
 
     def __init__(self, coordinator: JuraCoordinator, config_entry: ConfigEntry) -> None:
         super().__init__(coordinator, config_entry)
-        self._attr_name = f"Brew {self._name_suffix}"
+        # A translated subclass must leave _attr_name unset: Home Assistant
+        # only consults translation_key when no explicit name is present.
+        if getattr(self, "_attr_translation_key", None) is None:
+            self._attr_name = f"Brew {self._name_suffix}"
         self._attr_unique_id = f"{DOMAIN}_{self._slug}_brew_{self._selection_key}"
 
     def _param(self) -> ProductParam | None:
@@ -278,7 +288,7 @@ class _BrewParamSelect(JuraEntity, SelectEntity):
 
 
 class _ItemBrewSelect(_BrewParamSelect):
-    """Brew parameter backed by a fixed list of named ITEMs (strength/temperature).
+    """Brew parameter backed by a fixed list of named ITEMs.
 
     ``ProductParam.items`` carries hex-string ``.value``s (e.g. ``"02"``); the
     staged selection stores the numeric form (``int(value, 16)``) so it round-
@@ -307,6 +317,7 @@ class BrewStrengthSelect(_ItemBrewSelect):
     _param_kind = KIND_COFFEE_STRENGTH
     _selection_key = "strength"
     _name_suffix = "Strength"
+    _attr_translation_key = "brew_strength"
 
 
 class BrewTempSelect(_ItemBrewSelect):
@@ -315,6 +326,16 @@ class BrewTempSelect(_ItemBrewSelect):
     _param_kind = KIND_TEMPERATURE
     _selection_key = "temp"
     _name_suffix = "Temperature"
+    _attr_translation_key = "brew_temperature"
+
+
+class BrewGrinderRatioSelect(_ItemBrewSelect):
+    """Profile-declared left:right bean split for the next brew."""
+
+    _param_kind = KIND_GRINDER_RATIO
+    _selection_key = "grinder_ratio"
+    _name_suffix = "Grinder Ratio"
+    _attr_translation_key = "brew_grinder_ratio"
 
 
 class _RangeBrewSelect(_BrewParamSelect):
@@ -351,6 +372,7 @@ class BrewWaterSelect(_RangeBrewSelect):
     _param_kind = KIND_WATER_AMOUNT
     _selection_key = "water_ml"
     _name_suffix = "Water"
+    _attr_translation_key = "brew_water"
 
 
 class BrewMilkSelect(_RangeBrewSelect):
@@ -363,6 +385,7 @@ class BrewMilkSelect(_RangeBrewSelect):
     _param_kind = KIND_MILK_AMOUNT
     _selection_key = "milk_s"
     _name_suffix = "Milk"
+    _attr_translation_key = "brew_milk"
 
 
 class BrewMilkFoamSelect(_RangeBrewSelect):
@@ -371,3 +394,4 @@ class BrewMilkFoamSelect(_RangeBrewSelect):
     _param_kind = KIND_MILK_FOAM_AMOUNT
     _selection_key = "milk_foam_s"
     _name_suffix = "Milk Foam"
+    _attr_translation_key = "brew_milk_foam"

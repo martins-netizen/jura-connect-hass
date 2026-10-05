@@ -10,7 +10,10 @@
  * single `machine:` slug:
  *
  *   type: custom:jura-brew-card
- *   machine: kuche_kaffeebert   # slug shared by all that machine's entities
+ *   machine: kaffeebert   # matches entities by slug TOKEN, so it keeps
+ *                         # working even when the registry assigned parts of
+ *                         # the machine's entity set different prefixes
+ *                         # (select.kuche_kaffeebert_* + binary_sensor.kaffeebert_*)
  *
  * or override any individual entity explicitly:
  *
@@ -20,6 +23,7 @@
  *   strength: select.kuche_kaffeebert_brew_strength
  *   water: select.kuche_kaffeebert_brew_water
  *   temperature: select.kuche_kaffeebert_brew_temperature
+ *   grinder_ratio: select.kuche_kaffeebert_brew_grinder_ratio
  *   milk: select.kuche_kaffeebert_brew_milk
  *   milk_foam: select.kuche_kaffeebert_brew_milk_foam
  *   button: button.kuche_kaffeebert_brew
@@ -27,7 +31,7 @@
  *   connectivity: binary_sensor.kuche_kaffeebert_connectivity
  *
  * The Strength / Water / Temperature sliders sit at their leftmost notch when
- * the parameter is "Factory Default" (the backend's option[0]) — reading that
+ * the parameter is "Factory Default" (the translated backend option[0]) — reading that
  * back correctly and, when the user never touches the slider, sending it back
  * unchanged so the machine brews the product's own default recipe.
  *
@@ -36,12 +40,14 @@
  */
 
 // The backend prepends this sentinel as option[0] on every parameter select.
-const FACTORY_DEFAULT = "Factory Default";
+const FACTORY_DEFAULT = "factory_default";
+const FACTORY_DEFAULT_LABEL = "Factory Default";
 
 const PARAM_ROWS = [
   { key: "strength", label: "Strength", icon: "mdi:coffee" },
   { key: "water", label: "Water", icon: "mdi:cup-water", unit: " mL" },
   { key: "temperature", label: "Temperature", icon: "mdi:thermometer" },
+  { key: "grinder_ratio", label: "Grinders (left:right)", icon: "mdi:chart-donut" },
   { key: "milk", label: "Milk", icon: "mdi:beer-outline", unit: " s" },
   { key: "milk_foam", label: "Milk Foam", icon: "mdi:chart-bubble", unit: " s" },
 ];
@@ -93,13 +99,47 @@ class JuraBrewCard extends HTMLElement {
   // Fill in any entity the user did not configure by sniffing the states.
   _resolveEntities(hass) {
     const cfg = this._config;
-    // A `machine:` slug (e.g. "kuche_kaffeebert") is shorthand for the whole
-    // entity set — the friendly way to target one of several machines.
-    let product = cfg.product || (cfg.machine ? `select.${cfg.machine}_brew_product` : undefined);
+    const allIds = Object.keys(hass.states);
+    const toksOf = (id, domain, suffix) =>
+      new Set(id.slice(domain.length + 1, -suffix.length).split("_"));
+
+    // Candidate entities for one role. The entity registry reassigns
+    // entity_ids on rename/migration, so the parts of one machine's entity
+    // set can sit under different slug prefixes (product under
+    // select.kuche_<name>_* while connectivity kept binary_sensor.<name>_
+    // connectivity). Matching on slug TOKENS instead of the exact prefix
+    // keeps a machine's entities together across such drift.
+    const search = (domain, suffix, slug) => {
+      const cands = allIds.filter(
+        (id) => id.startsWith(`${domain}.`) && id.endsWith(suffix),
+      );
+      if (!slug) return cands;
+      const toks = new Set(slug.split("_"));
+      return cands.filter((id) => [...toksOf(id, domain, suffix)].some((t) => toks.has(t)));
+    };
+
+    // Exact `domain.<slug><suffix>` wins; otherwise the candidate whose id
+    // shares the most tokens with the machine slug. No token overlap -> no
+    // pick, so a pinned `machine:` never silently drives another machine.
+    const pick = (domain, suffix, explicit, slug) => {
+      if (explicit) return explicit;
+      if (!slug) return undefined;
+      const exact = `${domain}.${slug}${suffix}`;
+      if (hass.states[exact]) return exact;
+      const cands = search(domain, suffix, slug);
+      if (!cands.length) return undefined;
+      const toks = new Set(slug.split("_"));
+      return cands.sort(
+        (a, b) => [...toksOf(b, domain, suffix)].filter((t) => toks.has(t)).length
+          - [...toksOf(a, domain, suffix)].filter((t) => toks.has(t)).length,
+      )[0];
+    };
+
+    let product = pick("select", "_brew_product", cfg.product, cfg.machine || null);
     if (!product) {
-      // Sort so the auto-pick is deterministic across restarts when more than
-      // one machine is present; warn once so the user knows to pin one.
-      const candidates = Object.keys(hass.states)
+      // Zero-config auto-pick: deterministic (sorted) first candidate; warn
+      // once so the user knows to pin one with `machine:`.
+      const candidates = allIds
         .filter((id) => id.startsWith("select.") && id.endsWith("_brew_product"))
         .sort();
       product = candidates[0];
@@ -112,24 +152,32 @@ class JuraBrewCard extends HTMLElement {
         );
       }
     }
-    const base = product ? product.replace(/_brew_product$/, "") : null;
-    const slug = base ? base.split(".")[1] : null;
-    const pick = (explicit, domain, suffix) => {
-      if (explicit) return explicit;
-      if (!slug) return undefined;
-      const id = `${domain}.${slug}${suffix}`;
-      return hass.states[id] ? id : undefined;
+    // Without an explicit machine, derive one from the product id so status/
+    // connectivity can still be token-matched to the same machine.
+    const derived = product ? product.slice("select.".length, -"_brew_product".length) : null;
+
+    // Connectivity/status fallback for the unconfigured single-machine case:
+    // a lone *_<suffix> entity cannot be ambiguous.
+    const lone = (domain, suffix) => {
+      const cands = search(domain, suffix, null);
+      return cands.length === 1 ? cands[0] : undefined;
     };
+
     return {
       product,
-      strength: pick(cfg.strength, "select", "_brew_strength"),
-      water: pick(cfg.water, "select", "_brew_water"),
-      temperature: pick(cfg.temperature, "select", "_brew_temperature"),
-      milk: pick(cfg.milk, "select", "_brew_milk"),
-      milk_foam: pick(cfg.milk_foam, "select", "_brew_milk_foam"),
-      button: cfg.button || pick(null, "button", "_brew"),
-      status: pick(cfg.status, "sensor", "_status"),
-      connectivity: pick(cfg.connectivity, "binary_sensor", "_connectivity"),
+      strength: pick("select", "_brew_strength", cfg.strength, cfg.machine || derived),
+      water: pick("select", "_brew_water", cfg.water, cfg.machine || derived),
+      temperature: pick("select", "_brew_temperature", cfg.temperature, cfg.machine || derived),
+      grinder_ratio: pick("select", "_brew_grinder_ratio", cfg.grinder_ratio, cfg.machine || derived),
+      milk: pick("select", "_brew_milk", cfg.milk, cfg.machine || derived),
+      milk_foam: pick("select", "_brew_milk_foam", cfg.milk_foam, cfg.machine || derived),
+      button: pick("button", "_brew", cfg.button, cfg.machine || derived),
+      status:
+        pick("sensor", "_status", cfg.status, cfg.machine || derived) ||
+        (cfg.machine ? undefined : lone("sensor", "_status")),
+      connectivity:
+        pick("binary_sensor", "_connectivity", cfg.connectivity, cfg.machine || derived) ||
+        (cfg.machine ? undefined : lone("binary_sensor", "_connectivity")),
     };
   }
 
@@ -429,7 +477,7 @@ class JuraBrewCard extends HTMLElement {
           const idx = Number(input.value);
           const isDef = idx === 0;
           rowEl.classList.toggle("is-default", isDef);
-          valEl.textContent = isDef ? FACTORY_DEFAULT : `${opts[idx]}${row.unit || ""}`;
+          valEl.textContent = isDef ? FACTORY_DEFAULT_LABEL : this._formatValue(row, opts[idx]);
           this._paintSlider(input, isDef);
         });
         // Release: commit the value (which sets a pending hold) and end the
@@ -464,7 +512,7 @@ class JuraBrewCard extends HTMLElement {
       input.value = String(idx);
       const isDef = idx === 0;
       rowEl.classList.toggle("is-default", isDef);
-      valEl.textContent = isDef ? FACTORY_DEFAULT : `${options[idx]}${row.unit || ""}`;
+      valEl.textContent = isDef ? FACTORY_DEFAULT_LABEL : this._formatValue(row, options[idx]);
       this._paintSlider(input, isDef);
     }
 
@@ -483,6 +531,11 @@ class JuraBrewCard extends HTMLElement {
     }
     return pending;
   }
+
+  _formatValue(row, value) {
+    if (row.key === "grinder_ratio") return `${value}`.replace("_", ":");
+    return `${value}${row.unit || ""}`;
+  }
 }
 
 if (!customElements.get("jura-brew-card")) {
@@ -491,7 +544,7 @@ if (!customElements.get("jura-brew-card")) {
   window.customCards.push({
     type: "jura-brew-card",
     name: "Jura Brew Card",
-    description: "Brew a coffee from your JURA machine: product + strength/water/temperature sliders + Brew button.",
+    description: "Brew a coffee from your JURA machine: product + profile-backed recipe controls + Brew button.",
     preview: false,
   });
   // eslint-disable-next-line no-console

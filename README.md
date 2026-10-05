@@ -9,7 +9,7 @@ TT237W series). Built on the reverse-engineered
 directly to the machine's WiFi dongle on TCP/51515. No cloud, no vendor
 account.
 
-Requires `jura_connect>=0.9.1`. The integration ships the Python dependency
+Requires `jura_connect>=0.14.0`. The integration ships the Python dependency
 declaration; Nix users get it pinned via the flake input.
 
 ## Features
@@ -22,7 +22,7 @@ declaration; Nix users get it pinned via the flake input.
 - **One-shot pairing** — press OK on the machine once, the integration
   persists the resulting auth-hash on the config entry and reconnects
   silently afterwards.
-- **Per-machine profiles** — pick your model from a dropdown of 88 known
+- **Per-machine profiles** — pick your model from a dropdown of 89 known
   JURA variants (S8 EB, ENA 8, Z8, …). The profile drives the names of
   alerts, brew counters, and machine settings. Auto-detected from the UDP
   broadcast's article number when available.
@@ -49,6 +49,12 @@ declaration; Nix users get it pinned via the flake input.
 
 ### Configuration controls (CONFIG section)
 
+- **Brew controls** — one product picker plus profile-backed strength,
+  water, temperature, milk and milk-foam selectors and a Brew button.
+  Twin-grinder profiles additionally get a **grinder ratio** selector;
+  profiles without `GRINDER_RATIO` get no such entity, and products
+  without that parameter leave it unavailable. The left:right endpoints
+  were physically verified on a GIGA 6 / EF566.
 - **`select.*`** entities for switch / combobox / item-slider settings
   (language, units, auto-off delay, milk rinsing, frother instructions, …).
   Writes are validated against the profile before any TCP session opens, so
@@ -81,10 +87,46 @@ for reachability.
 Entity names use Home Assistant's native per-user translations, so each
 client sees them in its own UI language. English ships in `strings.json`
 (mirrored to `translations/en.json`); German (`de`) is fully translated in
-`translations/de.json`. The dynamic `Brew <recipe>` and `Setting <name>`
-entities translate their prefix and keep the machine-supplied name as a
-placeholder. To add a language, copy `translations/de.json` to
-`translations/<lang>.json` and translate the `name` values.
+`translations/de.json`. Brew controls also translate the EF566 product names,
+temperature levels and the locale-neutral `factory_default` state (shown as
+"Factory default" in English and "Standard" in German). Unknown product names
+from other machine profiles remain usable as their raw profile value. The
+dynamic `Brew <recipe>` and `Setting <name>` entities translate their prefix
+and keep the machine-supplied name as a placeholder. To add a language, copy
+`translations/de.json` to `translations/<lang>.json` and translate the `name`
+and `state` values.
+
+### Lovelace brew card
+
+The repo ships a companion dashboard card (`www/jura-brew-card.js`):
+status pill, Product picker, Strength / Water / Temperature sliders and
+a Brew button in one card. Copy the file to your HA `config/www/`
+directory and register it as a *module* dashboard resource pointing at
+`/local/jura-brew-card.js`. HA serves `/local/*` with a 31-day
+`Cache-Control`, so append a version query (`?v=<md5>`) and bump it on
+every card update, or browsers keep serving the stale copy.
+
+```yaml
+type: custom:jura-brew-card
+machine: kaffeebert   # optional — see below
+```
+
+- **Zero-config**: with no options the card auto-discovers the brew +
+  status entities; with several machines it picks the first
+  (alphabetically) and logs a warning.
+- **`machine:` pinning** matches by slug **token**, not exact prefix:
+  `machine: kaffeebert` resolves a machine whose entities drifted apart
+  in the entity registry (e.g. brew entities under
+  `select.kuche_kaffeebert_brew_*` while connectivity kept
+  `binary_sensor.kaffeebert_connectivity`). A pinned machine never
+  borrows another machine's entities; exact per-entity options
+  (`product:`, `connectivity:`, …) always win over auto-resolution.
+- **Offline handling**: the `binary_sensor.<machine>_connectivity`
+  entity is the reachability signal. When it is `off` (or the status
+  sensor is `unavailable`), the card shows a grey *Offline* pill plus a
+  "brewing unavailable" note, and disables the sliders and the Brew
+  button — a retained `last_press` timestamp on the brew button is not
+  treated as "online".
 
 ### Services
 
@@ -101,13 +143,18 @@ placeholder. To add a language, copy `translations/de.json` to
 | `jura.cappu_clean`     | Clean the milk system (requires cleaning tablet)      |
 | `jura.power_off`       | Put the machine into standby (TT237W ignores this)    |
 | `jura.restart`         | Reboot the WiFi dongle                                |
+| `jura.cancel`          | Cancel the current process/brew                       |
+| `jura.skip_quality_step` | Skip the current quality-assistant step (`scope`: one/all) |
+| `jura.milk_cooler_status` | Read the milk-cooler temperature (response)        |
+| `jura.restart_dongle`  | Reboot the WiFi dongle (library-gated variant)        |
+| `jura.special_counters` | Read special-function counters (response)            |
 
 All services accept `entity_id` (any Jura entity) or `config_entry_id` to
 target a specific machine. Brewing returns the raw command result as the
 service response.
 
 Destructive registry entries that can lock you out of the machine
-(`reset-counters`, `set-pin`, `set-ssid`, `set-password`, `raw`) are
+(`skip-quality-step`, `set-pin`, `set-ssid`, `set-password`, `raw`) are
 deliberately **not** exposed as HA services. Use the upstream
 `jura-connect` CLI if you need them.
 
