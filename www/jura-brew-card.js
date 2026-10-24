@@ -141,7 +141,13 @@ class JuraBrewCard extends HTMLElement {
       // once so the user knows to pin one with `machine:`.
       const candidates = allIds
         .filter((id) => id.startsWith("select.") && id.endsWith("_brew_product"))
-        .sort();
+        .sort((a, b) => {
+          // Entity IDs are identifiers, not display labels. Keep the existing
+          // code-unit order so browser locale cannot change the chosen machine.
+          if (a < b) return -1;
+          if (a > b) return 1;
+          return 0;
+        });
       product = candidates[0];
       if (candidates.length > 1 && !this._warnedMulti) {
         this._warnedMulti = true;
