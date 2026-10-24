@@ -74,6 +74,8 @@ function loadCard() {
     window: {},
     console: { warn() {}, info() {} },
   };
+  // Evaluate only the repository-owned card at the fixed path above. This
+  // context supplies browser stubs; it is not a sandbox for untrusted code.
   vm.runInNewContext(src, sandbox, { filename: "jura-brew-card.js" });
   return Card;
 }
@@ -135,9 +137,9 @@ test("machine: pin never drives another machine's entities", () => {
   assert.equal(ids.status, undefined);
 });
 
-function render(Card, states, config = { title: "Coffee" }) {
+function render(Card, states, config) {
   const card = new Card();
-  card.setConfig(config);
+  card.setConfig(config ?? { title: "Coffee" });
   card.hass = { states, callService: () => {} };
   return card;
 }
@@ -204,4 +206,24 @@ test("online machine renders status pill, not Offline", () => {
   assert.equal(pillText.textContent, "Ready");
   assert.ok(pill._cls.has("ready"));
   assert.equal(brew.disabled, false);
+});
+
+test("auto-pick preserves identifier order across registry insertion orders", () => {
+  const products = [
+    "select.coffee_brew_product",
+    "select.coffee_1_brew_product",
+    "select.coffee1_brew_product",
+    "select.coffee10_brew_product",
+  ];
+  for (const ids of [products, [...products].reverse()]) {
+    const states = Object.fromEntries(ids.map((entity_id) => [entity_id, {
+      entity_id,
+      state: "espresso",
+      attributes: { options: ["espresso"] },
+    }]));
+    const Card = loadCard();
+    const card = new Card();
+    card.setConfig({});
+    assert.equal(card._resolveEntities({ states }).product, "select.coffee10_brew_product");
+  }
 });
