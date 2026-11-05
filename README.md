@@ -160,12 +160,37 @@ deliberately **not** exposed as HA services. Use the upstream
 
 ## Installation
 
-### HACS (recommended)
+<a id="hacs-recommended"></a>
 
-1. In HACS → Integrations → ⋮ → **Custom repositories**, add
-   `https://github.com/makefu/jura-connect-hass` as type *Integration*.
-2. Install **Jura Connect** from the list.
-3. Restart Home Assistant.
+### Marketplace (HA 2026.11+)
+
+1. Open **Settings → Marketplace** and acknowledge the community-code notice
+   if prompted. Use **Add from link** with
+   `https://github.com/makefu/jura-connect-hass`, then **Add** if it is not listed.
+   Custom repositories require a GitHub connection. The type is detected;
+   choose **Integration** only if prompted.
+2. Open **Jura Connect**, verify the repository and install the intended published
+   release. Marketplace opens setup after a first install; an integration not
+   previously loaded does not normally need an HA restart.
+3. Continue with [Configuration](#configuration). If setup does not open, add
+   **Jura Connect** under **Settings → Devices & services → Add integration**.
+
+These steps retain the **upstream** installation source. An existing local
+combined/patched installation needs its own source and compatibility review;
+do not overwrite it or change repository ownership just to follow the new UI.
+
+Existing HACS repositories migrate automatically when HA upgrades to 2026.11.
+Do not reinstall HACS or recreate the configured Jura entry. Updates appear in
+**Settings → Updates** and still need an HA restart; follow the repair notice
+and retain the existing pairing/configuration. Software removal also needs a
+restart. See the [official Marketplace guide](https://www.home-assistant.io/integrations/marketplace/).
+
+### Older HA: HACS
+
+1. Open **HACS → three-dot menu → Custom repositories** and add
+   `https://github.com/makefu/jura-connect-hass` as type **Integration** if absent.
+2. Install **Jura Connect** from the list and restart Home Assistant.
+3. Continue with Configuration below. Existing users keep their configured entry.
 
 ### Manual
 
