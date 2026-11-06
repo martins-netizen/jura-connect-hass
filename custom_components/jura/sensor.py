@@ -96,10 +96,16 @@ class StateSensor(JuraEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
+        # Poll health is coordinator-owned truth: expose it even without a
+        # snapshot so dashboards never lose the freshness flags.
+        health = {
+            "last_successful_update": self.coordinator.last_successful_update,
+            "last_poll_success": self.coordinator.last_poll_success,
+        }
         snapshot = _snapshot(self.coordinator)
         if snapshot is None:
-            return {}
-        return serialize_snapshot(snapshot)
+            return health
+        return {**serialize_snapshot(snapshot), **health}
 
 
 class BrewProgressSensor(JuraEntity, SensorEntity):
