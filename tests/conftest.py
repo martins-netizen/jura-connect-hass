@@ -194,7 +194,23 @@ class SelectSelectorMode(str, Enum):
     LIST = "list"
 
 
-_make_module("homeassistant.helpers.selector", BooleanSelector=BooleanSelector, SelectSelector=SelectSelector)
+class NumberSelectorConfig(dict):
+    def __init__(self, config=None, **kwargs):
+        super().__init__(config or kwargs)
+
+
+class NumberSelector(dict):
+    def __init__(self, config=None):
+        super().__init__(config if isinstance(config, dict) else {"config": config})
+
+
+_make_module(
+    "homeassistant.helpers.selector",
+    BooleanSelector=BooleanSelector,
+    SelectSelector=SelectSelector,
+    NumberSelector=NumberSelector,
+    NumberSelectorConfig=NumberSelectorConfig,
+)
 
 
 # --- homeassistant.exceptions ---
@@ -665,3 +681,11 @@ def discovered_machines() -> list[DiscoveredMachine]:
         ),
         DiscoveredMachine(address="192.0.2.11", name="192.0.2.11", via="tcp"),
     ]
+
+
+@pytest.fixture(autouse=True)
+def no_wall_clock_session_gap(monkeypatch):
+    """Keep mocked legacy operations fast; session tests install their own clock."""
+    from custom_components.jura import coordinator as coordinator_module
+
+    monkeypatch.setattr(coordinator_module, "SESSION_COOLDOWN_SECONDS", 0)
