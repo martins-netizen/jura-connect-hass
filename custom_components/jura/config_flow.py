@@ -20,7 +20,6 @@ import uuid
 from typing import Any
 
 import voluptuous as vol
-
 from homeassistant.config_entries import (
     ConfigFlow,
     ConfigFlowResult,
@@ -47,6 +46,7 @@ from .const import (
     MACHINE_TYPE_NONE,
     SELECTION_MANUAL,
 )
+from .timers import CONF_WEEKDAY_TIMERS, TIMER_MODEL
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -119,7 +119,7 @@ class JuraConfigFlow(ConfigFlow, domain=DOMAIN):
 
         try:
             self._discovered = self._discover_task.result()
-        except Exception as err:  # noqa: BLE001
+        except Exception as err:
             _LOGGER.exception("discovery failed")
             self._last_error_message = str(err)
             self._discover_task = None
@@ -371,6 +371,16 @@ class JuraOptionsFlow(OptionsFlowWithConfigEntry):
                 ): float,
             }
         )
+        if self.config_entry.data.get(CONF_MACHINE_TYPE) == TIMER_MODEL:
+            schema = schema.extend(
+                {
+                    vol.Optional(
+                        CONF_WEEKDAY_TIMERS,
+                        default=self.config_entry.options.get(CONF_WEEKDAY_TIMERS) is True,
+                        description={"advanced": True, "selector": {"boolean": {}}},
+                    ): bool,
+                }
+            )
         return self.async_show_form(step_id="init", data_schema=schema)
 
     def _current_seconds(self, key: str, default: float) -> float:

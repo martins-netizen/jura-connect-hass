@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
+from datetime import time
 from typing import Any
 
 from jura_connect import (
@@ -28,6 +29,15 @@ from jura_connect import (
 )
 from jura_connect.client import BREW_REPLY_MATCH
 
+from ..timers import (
+    ALL_DAYS_SLOT,
+    TIMER_MODEL,
+    WEEKDAY_SLOTS,
+    TimerAction,
+    TimerSlot,
+    TimerUpdate,
+    target_timer,
+)
 from .base import (
     DiscoveredMachine,
     JuraAuthError,
@@ -77,6 +87,7 @@ class JuraConnectBackend(JuraBackend):
         machine_type: str | None = None,
         connect_timeout: float = 5.0,
         read_timeout: float = 10.0,
+        weekday_timers: bool = False,
     ) -> None:
         self.address = address
         self.port = port
@@ -86,6 +97,7 @@ class JuraConnectBackend(JuraBackend):
         self.machine_type = machine_type or None
         self.connect_timeout = connect_timeout
         self.read_timeout = read_timeout
+        self.weekday_timers = weekday_timers and self.machine_type == TIMER_MODEL
         self._profile, self._machine_type_name = _resolve_profile_and_name(self.machine_type)
 
     def _make_client(self) -> JuraClient:
@@ -153,6 +165,12 @@ class JuraConnectBackend(JuraBackend):
                         settings_values = {r.name: r.raw for r in snap.readings if r.name}
                     except Exception as err:  # noqa: BLE001
                         _LOGGER.debug("settings read unavailable: %s", err)
+                timers: dict[str, TimerSlot] = {}
+                if self.weekday_timers:
+                    try:
+                        timers = self._read_timers(client)
+                    except (ValueError, OSError) as err:
+                        _LOGGER.debug("weekday timer read unavailable: %s", err)
             except HandshakeError as err:
                 raise JuraAuthError(str(err)) from err
             except OSError as err:
@@ -179,6 +197,7 @@ class JuraConnectBackend(JuraBackend):
                 settings=settings_values,
                 blocked_products=tuple(info.status.blocked_products),
                 progress=None,
+                timers=timers,
             )
 
         return await asyncio.to_thread(_do)
@@ -233,6 +252,46 @@ class JuraConnectBackend(JuraBackend):
             return stored
 
         return await asyncio.to_thread(_do)
+
+    @staticmethod
+    def _read_timers(client: JuraClient) -> dict[str, TimerSlot]:
+        return client.read_weekday_timers()
+
+    async def update_timer(self, slot: str, action: TimerAction, value: time | None) -> TimerUpdate:
+        if not self.weekday_timers or slot not in WEEKDAY_SLOTS.values():
+            raise JuraBackendError("Weekday timer address is not enabled for this machine")
+
+        def _do() -> TimerUpdate:
+            client = self._make_client()
+            try:
+                if client.connect().state != "CORRECT":
+                    raise JuraAuthError("JURA authentication rejected")
+                before = self._read_timers(client)
+                if before[ALL_DAYS_SLOT] != TimerSlot(None, None):
+                    raise JuraBackendError("Clear the all-days timer on the JURA before editing weekdays")
+                desired = target_timer(before[slot], action, value)
+                if desired == before[slot]:
+                    return TimerUpdate(before, before[slot].on)
+                day = next(day for day, address in WEEKDAY_SLOTS.items() if address == slot)
+                return client.set_weekday_timer(day, desired.on)
+            except HandshakeError as err:
+                raise JuraAuthError(str(err)) from err
+            except (OSError, ValueError) as err:
+                raise JuraBackendError(f"Weekday timer operation failed: {err}") from err
+            finally:
+                client.close()
+
+        # Cancellation of the caller must not release the coordinator's
+        # session lock while the executor still owns the dongle.
+        task = asyncio.create_task(asyncio.to_thread(_do))
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            try:
+                await task
+            except (JuraBackendError, OSError):
+                _LOGGER.debug("Weekday timer operation ended after cancellation", exc_info=True)
+            raise
 
     async def run_named(
         self,
