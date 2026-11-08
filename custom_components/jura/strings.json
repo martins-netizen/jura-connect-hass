@@ -66,10 +66,15 @@
                 "data": {
                     "retain_when_offline": "Retain last values when offline",
                     "session_cooldown_seconds": "Quiet period between sessions (seconds)",
-                    "brew_follow_seconds": "Follow brew progress up to (seconds)"
+                    "brew_follow_seconds": "Follow brew progress up to (seconds)",
+                    "clock_sync": "Clock synchronization (GIGA 6)"
+                },
+                "data_description": {
+                    "clock_sync": "Synchronize once with the button or automatically when the machine is ready."
                 }
             }
-        }
+        },
+        "error": {}
     },
     "entity": {
         "sensor": {
@@ -114,6 +119,31 @@
             },
             "percent_descale": {
                 "name": "Descaling level"
+            },
+            "clock_last_check": {
+                "name": "Last successful clock check"
+            },
+            "clock_sync_status": {
+                "name": "Clock synchronization",
+                "state": {
+                    "not_run": "Not checked since loading",
+                    "checking": "Checking",
+                    "verifying": "Checking clock progression",
+                    "already_aligned": "Already synchronized",
+                    "synchronized": "Synchronized and verified",
+                    "failed": "Check failed"
+                },
+                "state_attributes": {
+                    "jura_time": {
+                        "name": "JURA time"
+                    },
+                    "checked_at": {
+                        "name": "Checked at"
+                    },
+                    "detail": {
+                        "name": "Detail"
+                    }
+                }
             }
         },
         "binary_sensor": {
@@ -327,6 +357,20 @@
         "number": {
             "setting": {
                 "name": "Setting {setting}"
+            }
+        },
+        "button": {
+            "clock_sync": {
+                "name": "Synchronize clock with HA"
+            }
+        }
+    },
+    "selector": {
+        "clock_sync_mode": {
+            "options": {
+                "off": "Off",
+                "manual": "One-off via button",
+                "automatic": "Automatic"
             }
         }
     }

@@ -42,6 +42,31 @@
             },
             "percent_descale": {
                 "name": "Entkalkungsstand"
+            },
+            "clock_last_check": {
+                "name": "Letzte erfolgreiche Uhrprüfung"
+            },
+            "clock_sync_status": {
+                "name": "Uhrensynchronisation",
+                "state": {
+                    "not_run": "Seit dem Laden noch nicht geprüft",
+                    "checking": "Prüfung läuft",
+                    "verifying": "Weiterlauf wird geprüft",
+                    "already_aligned": "Uhr stimmt bereits",
+                    "synchronized": "Synchronisiert und geprüft",
+                    "failed": "Prüfung fehlgeschlagen"
+                },
+                "state_attributes": {
+                    "jura_time": {
+                        "name": "JURA-Uhrzeit"
+                    },
+                    "checked_at": {
+                        "name": "Geprüft um"
+                    },
+                    "detail": {
+                        "name": "Hinweis"
+                    }
+                }
             }
         },
         "binary_sensor": {
@@ -255,6 +280,33 @@
         "number": {
             "setting": {
                 "name": "Einstellung {setting}"
+            }
+        },
+        "button": {
+            "clock_sync": {
+                "name": "Uhr mit HA synchronisieren"
+            }
+        }
+    },
+    "options": {
+        "step": {
+            "init": {
+                "data": {
+                    "clock_sync": "Uhrensynchronisation (GIGA 6)"
+                },
+                "data_description": {
+                    "clock_sync": "Einmalig per Knopf oder automatisch, sobald die JURA betriebsbereit ist."
+                }
+            }
+        },
+        "error": {}
+    },
+    "selector": {
+        "clock_sync_mode": {
+            "options": {
+                "off": "Aus",
+                "manual": "Einmalig per Knopf",
+                "automatic": "Automatisch"
             }
         }
     }

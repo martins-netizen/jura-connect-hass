@@ -20,7 +20,6 @@ import uuid
 from typing import Any
 
 import voluptuous as vol
-
 from homeassistant.config_entries import (
     ConfigFlow,
     ConfigFlowResult,
@@ -31,6 +30,11 @@ from homeassistant.core import callback
 
 from .backends.base import DiscoveredMachine, JuraAuthError, JuraBackendError
 from .backends.jura import JuraConnectBackend, discover_machines, machine_type_from_article
+from .clock import (
+    CLOCK_MODEL,
+    CLOCK_SYNC_MODES,
+    CONF_CLOCK_SYNC,
+)
 from .const import (
     CONF_AUTH_HASH,
     CONF_BREW_FOLLOW_SECONDS,
@@ -119,7 +123,7 @@ class JuraConfigFlow(ConfigFlow, domain=DOMAIN):
 
         try:
             self._discovered = self._discover_task.result()
-        except Exception as err:  # noqa: BLE001
+        except Exception as err:
             _LOGGER.exception("discovery failed")
             self._last_error_message = str(err)
             self._discover_task = None
@@ -320,8 +324,12 @@ class JuraOptionsFlow(OptionsFlowWithConfigEntry):
     """
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        supports_clock = self.config_entry.data.get(CONF_MACHINE_TYPE) == CLOCK_MODEL
+        errors: dict[str, str] = {}
         if user_input is not None:
-            return self.async_create_entry(title="", data=dict(user_input))
+            data = dict(user_input)
+            if not errors:
+                return self.async_create_entry(title="", data=data)
 
         current = bool(
             self.config_entry.options.get(
@@ -329,11 +337,12 @@ class JuraOptionsFlow(OptionsFlowWithConfigEntry):
                 self.config_entry.data.get(CONF_RETAIN_WHEN_OFFLINE, DEFAULT_RETAIN_WHEN_OFFLINE),
             )
         )
+        submitted = user_input or {}
         schema = vol.Schema(
             {
                 vol.Optional(
                     CONF_RETAIN_WHEN_OFFLINE,
-                    default=current,
+                    default=submitted.get(CONF_RETAIN_WHEN_OFFLINE, current),
                     description={
                         "advanced": True,
                         "selector": {"boolean": {}},
@@ -341,7 +350,9 @@ class JuraOptionsFlow(OptionsFlowWithConfigEntry):
                 ): bool,
                 vol.Optional(
                     CONF_SESSION_COOLDOWN_SECONDS,
-                    default=self._current_seconds(CONF_SESSION_COOLDOWN_SECONDS, 10.0),
+                    default=submitted.get(
+                        CONF_SESSION_COOLDOWN_SECONDS, self._current_seconds(CONF_SESSION_COOLDOWN_SECONDS, 10.0)
+                    ),
                     description={
                         "advanced": True,
                         "selector": {
@@ -356,7 +367,9 @@ class JuraOptionsFlow(OptionsFlowWithConfigEntry):
                 ): float,
                 vol.Optional(
                     CONF_BREW_FOLLOW_SECONDS,
-                    default=self._current_seconds(CONF_BREW_FOLLOW_SECONDS, 120.0),
+                    default=submitted.get(
+                        CONF_BREW_FOLLOW_SECONDS, self._current_seconds(CONF_BREW_FOLLOW_SECONDS, 120.0)
+                    ),
                     description={
                         "advanced": True,
                         "selector": {
@@ -371,7 +384,26 @@ class JuraOptionsFlow(OptionsFlowWithConfigEntry):
                 ): float,
             }
         )
-        return self.async_show_form(step_id="init", data_schema=schema)
+        if supports_clock:
+            schema = schema.extend(
+                {
+                    vol.Optional(
+                        CONF_CLOCK_SYNC,
+                        default=submitted.get(CONF_CLOCK_SYNC, self.config_entry.options.get(CONF_CLOCK_SYNC, "off")),
+                        description={
+                            "advanced": True,
+                            "selector": {
+                                "select": {
+                                    "options": list(CLOCK_SYNC_MODES),
+                                    "mode": "dropdown",
+                                    "translation_key": "clock_sync_mode",
+                                }
+                            },
+                        },
+                    ): vol.In(CLOCK_SYNC_MODES),
+                }
+            )
+        return self.async_show_form(step_id="init", data_schema=schema, errors=errors)
 
     def _current_seconds(self, key: str, default: float) -> float:
         options = self.config_entry.options or {}

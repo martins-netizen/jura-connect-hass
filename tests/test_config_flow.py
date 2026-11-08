@@ -421,3 +421,16 @@ def test_config_flow_registers_options_flow(fake_config_entry):
 
     flow = JuraOptionsFlow(fake_config_entry)
     assert flow.config_entry is fake_config_entry
+
+
+async def test_clock_options_use_ha_time_and_offer_no_server_field(fake_config_entry):
+    from custom_components.jura.config_flow import JuraOptionsFlow
+
+    fake_config_entry.data["machine_type"] = "EF566"
+    flow = JuraOptionsFlow(fake_config_entry)
+    form = await flow.async_step_init()
+    fields = {str(key) for key in form["data_schema"].schema}
+    assert "clock_sync" in fields
+    assert not any("server" in field for field in fields)
+    saved = await flow.async_step_init({"clock_sync": "automatic"})
+    assert saved["data"] == {"clock_sync": "automatic"}
